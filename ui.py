@@ -31,16 +31,25 @@ TOKEN_COLORS = {
     TOKEN_DEFAULT: (0, 220, 0),
 }
 
-# Layout
+# Layout defaults
 SCREEN_W = 1920
 SCREEN_H = 1080
 TOP_BAR_H = 45
 STATUS_BAR_H = 30
-EDITOR_W = int(SCREEN_W * 0.6)
-SHOP_W = SCREEN_W - EDITOR_W
-CONTENT_TOP = TOP_BAR_H
-CONTENT_BOTTOM = SCREEN_H - STATUS_BAR_H
-CONTENT_H = CONTENT_BOTTOM - CONTENT_TOP
+EDITOR_RATIO = 0.6
+
+
+def calc_layout(w, h):
+    """Calculate derived layout values from screen dimensions."""
+    editor_w = int(w * EDITOR_RATIO)
+    shop_w = w - editor_w
+    content_top = TOP_BAR_H
+    content_bottom = h - STATUS_BAR_H
+    content_h = content_bottom - content_top
+    return editor_w, shop_w, content_top, content_bottom, content_h
+
+
+EDITOR_W, SHOP_W, CONTENT_TOP, CONTENT_BOTTOM, CONTENT_H = calc_layout(SCREEN_W, SCREEN_H)
 
 MAX_EDITOR_LINES = 200
 
@@ -65,12 +74,19 @@ class CodeEditor:
         self.line_number = 1
         self.scroll_offset = 0
         self.cursor_blink = 0.0
-        self.x = 0
-        self.y = CONTENT_TOP
-        self.w = EDITOR_W
-        self.h = CONTENT_H
         self.line_num_width = 50
         self.code_x = self.line_num_width + 10
+        self._apply_layout(EDITOR_W, CONTENT_TOP, CONTENT_H)
+
+    def _apply_layout(self, editor_w, content_top, content_h):
+        self.x = 0
+        self.y = content_top
+        self.w = editor_w
+        self.h = content_h
+
+    def resize(self, screen_w, screen_h):
+        editor_w, _, content_top, _, content_h = calc_layout(screen_w, screen_h)
+        self._apply_layout(editor_w, content_top, content_h)
 
     def add_chars(self, chars_with_tokens):
         """Add typed characters to the editor display."""
@@ -164,14 +180,21 @@ class ShopPanel:
         self.font = pygame.font.Font(None, 22)
         self.title_font = pygame.font.Font(None, 28)
         self.tab_font = pygame.font.Font(None, 20)
-        self.x = EDITOR_W
-        self.y = CONTENT_TOP
-        self.w = SHOP_W
-        self.h = CONTENT_H
         self.active_tab = 0  # index into CATEGORY_ORDER
         self.scroll_offset = 0
         self.item_rects = []  # for click detection: (rect, upgrade)
         self.tab_rects = []
+        self._apply_layout(EDITOR_W, SHOP_W, CONTENT_TOP, CONTENT_H)
+
+    def _apply_layout(self, editor_w, shop_w, content_top, content_h):
+        self.x = editor_w
+        self.y = content_top
+        self.w = shop_w
+        self.h = content_h
+
+    def resize(self, screen_w, screen_h):
+        editor_w, shop_w, content_top, _, content_h = calc_layout(screen_w, screen_h)
+        self._apply_layout(editor_w, shop_w, content_top, content_h)
 
     def handle_click(self, pos, game_state):
         """Handle mouse click in shop. Returns upgrade if purchased."""
@@ -280,6 +303,10 @@ class TopBar:
         self.font = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
         self.display_loc = 0.0  # animated lerp
+        self.screen_w = SCREEN_W
+
+    def resize(self, screen_w, screen_h):
+        self.screen_w = screen_w
 
     def update(self, dt, actual_loc):
         # Lerp toward actual value
@@ -287,9 +314,13 @@ class TopBar:
         self.display_loc += diff * min(1.0, dt * 10)
 
     def draw(self, surface, game_state, loc_per_sec, global_mult):
-        bar_rect = pygame.Rect(0, 0, SCREEN_W, TOP_BAR_H)
+        w = self.screen_w
+        bar_rect = pygame.Rect(0, 0, w, TOP_BAR_H)
         pygame.draw.rect(surface, TOP_BAR_BG, bar_rect)
-        pygame.draw.line(surface, SEPARATOR_COLOR, (0, TOP_BAR_H), (SCREEN_W, TOP_BAR_H))
+        pygame.draw.line(surface, SEPARATOR_COLOR, (0, TOP_BAR_H), (w, TOP_BAR_H))
+
+        # Spread items evenly across the bar
+        spacing = max(200, w // 5)
 
         # LOC counter
         loc_text = f"LOC: {format_number(self.display_loc)}"
@@ -299,23 +330,25 @@ class TopBar:
         # LOC/sec
         rate_text = f"{format_number(loc_per_sec)} LOC/sec"
         rate_surf = self.small_font.render(rate_text, True, (0, 180, 80))
-        surface.blit(rate_surf, (300, 14))
+        surface.blit(rate_surf, (20 + spacing, 14))
 
         # Total LOC
         total_text = f"Total: {format_number(game_state.total_loc)}"
         total_surf = self.small_font.render(total_text, True, (0, 140, 60))
-        surface.blit(total_surf, (550, 14))
+        surface.blit(total_surf, (20 + spacing * 2, 14))
 
         # Multiplier
         if global_mult > 1:
             mult_text = f"x{format_number(global_mult)} mult"
             mult_surf = self.small_font.render(mult_text, True, (200, 200, 0))
-            surface.blit(mult_surf, (750, 14))
+            surface.blit(mult_surf, (20 + spacing * 3, 14))
 
 
 class StatusBar:
     def __init__(self):
         self.font = pygame.font.Font(None, 22)
+        self.screen_w = SCREEN_W
+        self.screen_h = SCREEN_H
         self.messages = [
             "Press any key to start coding...",
             "The vibes are immaculate",
@@ -356,10 +389,16 @@ class StatusBar:
             import random
             self.current_message = random.choice(self.messages)
 
+    def resize(self, screen_w, screen_h):
+        self.screen_w = screen_w
+        self.screen_h = screen_h
+
     def draw(self, surface):
-        bar_rect = pygame.Rect(0, SCREEN_H - STATUS_BAR_H, SCREEN_W, STATUS_BAR_H)
+        w = self.screen_w
+        h = self.screen_h
+        bar_rect = pygame.Rect(0, h - STATUS_BAR_H, w, STATUS_BAR_H)
         pygame.draw.rect(surface, STATUS_BAR_BG, bar_rect)
         pygame.draw.line(surface, SEPARATOR_COLOR,
-                         (0, SCREEN_H - STATUS_BAR_H), (SCREEN_W, SCREEN_H - STATUS_BAR_H))
+                         (0, h - STATUS_BAR_H), (w, h - STATUS_BAR_H))
         text_surf = self.font.render(self.current_message, True, (0, 180, 80))
-        surface.blit(text_surf, (20, SCREEN_H - STATUS_BAR_H + 6))
+        surface.blit(text_surf, (20, h - STATUS_BAR_H + 6))
